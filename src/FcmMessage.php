@@ -3,6 +3,7 @@
 namespace NotificationChannels\Fcm;
 
 use Kreait\Firebase\Messaging\Message;
+use NotificationChannels\Fcm\Exceptions\CouldNotSendNotification;
 use NotificationChannels\Fcm\Resources\AndroidConfig;
 use NotificationChannels\Fcm\Resources\ApnsConfig;
 use NotificationChannels\Fcm\Resources\FcmOptions;
@@ -94,11 +95,19 @@ class FcmMessage implements Message
     }
 
     /**
-     * @param  array|null  $data
+     * @param  array<string, string>|null  $data
      * @return FcmMessage
+     *
+     * @throws \NotificationChannels\Fcm\Exceptions\CouldNotSendNotification
      */
     public function setData(?array $data): self
     {
+        foreach ($data as $key => $item) {
+            if (! is_string($item)) {
+                throw CouldNotSendNotification::invalidPropertyInArray($key);
+            }
+        }
+
         $this->data = $data;
 
         return $this;
@@ -258,7 +267,7 @@ class FcmMessage implements Message
 
     public function toArray()
     {
-        return [
+        $data = [
             'name' => $this->getName(),
             'data' => $this->getData(),
             'notification' => ! is_null($this->getNotification()) ? $this->getNotification()->toArray() : null,
@@ -266,10 +275,21 @@ class FcmMessage implements Message
             'webpush' => ! is_null($this->getWebpush()) ? $this->getWebpush()->toArray() : null,
             'apns' => ! is_null($this->getApns()) ? $this->getApns()->toArray() : null,
             'fcm_options' => ! is_null($this->getFcmOptions()) ? $this->getFcmOptions()->toArray() : null,
-            'token' => $this->getToken(),
-            'topic' => $this->getTopic(),
-            'condition' => $this->getCondition(),
         ];
+
+        if ($token = $this->getToken()) {
+            $data['token'] = $token;
+        }
+
+        if ($topic = $this->getTopic()) {
+            $data['topic'] = $topic;
+        }
+
+        if ($condition = $this->getCondition()) {
+            $data['condition'] = $condition;
+        }
+
+        return $data;
     }
 
     /**
