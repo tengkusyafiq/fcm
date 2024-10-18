@@ -6,20 +6,16 @@
 [![Quality Score](https://img.shields.io/scrutinizer/g/laravel-notification-channels/fcm.svg?style=flat-square)](https://scrutinizer-ci.com/g/laravel-notification-channels/fcm)
 [![Total Downloads](https://img.shields.io/packagist/dt/laravel-notification-channels/fcm.svg?style=flat-square)](https://packagist.org/packages/laravel-notification-channels/fcm)
 
-This package makes it easy to send notifications using [Firebase Cloud Messaging](https://firebase.google.com/docs/cloud-messaging/) (FCM) with Laravel 5.5+, 6.x, 7.x and 8.x.
-
-## Version 2 Released (March 4, 2020)
-
-V2.0.0 has been released and FCM API calls has been migrated from legacy HTTP to HTTP v1 (docs from Firebase 
-[here](https://firebase.google.com/docs/cloud-messaging/migrate-v1)). This is a breaking change so notifications using
-v1.x should not upgrade to v2.x of this package unless you plan on migrating your notification classes.
+This package makes it easy to send notifications using [Firebase Cloud Messaging](https://firebase.google.com/docs/cloud-messaging/) (FCM) with Laravel.
 
 ## Contents
 
 - [Installation](#installation)
-	- [Setting up the Fcm service](#setting-up-the-Fcm-service)
+	- [Setting up the FCM service](#setting-up-the-fcm-service)
 - [Usage](#usage)
-	- [Available Message methods](#available-message-methods)
+	- [Available message methods](#available-message-methods)
+    - [Custom clients](#custom-clients)
+    - [Handling errors](#handling-errors)
 - [Changelog](#changelog)
 - [Testing](#testing)
 - [Security](#security)
@@ -33,7 +29,7 @@ v1.x should not upgrade to v2.x of this package unless you plan on migrating you
 Install this package with Composer:
 
 ```bash
-composer require laravel-notification-channels/fcm:~2.0
+composer require laravel-notification-channels/fcm
 ```
 
 ### Setting up the FCM service
@@ -54,11 +50,7 @@ it via the `FcmChannel::class`. Here is an example:
 use Illuminate\Notifications\Notification;
 use NotificationChannels\Fcm\FcmChannel;
 use NotificationChannels\Fcm\FcmMessage;
-use NotificationChannels\Fcm\Resources\AndroidConfig;
-use NotificationChannels\Fcm\Resources\AndroidFcmOptions;
-use NotificationChannels\Fcm\Resources\AndroidNotification;
-use NotificationChannels\Fcm\Resources\ApnsConfig;
-use NotificationChannels\Fcm\Resources\ApnsFcmOptions;
+use NotificationChannels\Fcm\Resources\Notification as FcmNotification;
 
 class AccountActivated extends Notification
 {
@@ -67,40 +59,49 @@ class AccountActivated extends Notification
         return [FcmChannel::class];
     }
 
-    public function toFcm($notifiable)
+    public function toFcm($notifiable): FcmMessage
     {
-        return FcmMessage::create()
-            ->setData(['data1' => 'value', 'data2' => 'value2'])
-            ->setNotification(\NotificationChannels\Fcm\Resources\Notification::create()
-                ->setTitle('Account Activated')
-                ->setBody('Your account has been activated.')
-                ->setImage('http://example.com/url-to-image-here.png'))
-            ->setAndroid(
-                AndroidConfig::create()
-                    ->setFcmOptions(AndroidFcmOptions::create()->setAnalyticsLabel('analytics'))
-                    ->setNotification(AndroidNotification::create()->setColor('#0A0A0A'))
-            )->setApns(
-                ApnsConfig::create()
-                    ->setFcmOptions(ApnsFcmOptions::create()->setAnalyticsLabel('analytics_ios')));
-    }
-
-    // optional method when using kreait/laravel-firebase:^3.0, this method can be omitted, defaults to the default project
-    public function fcmProject($notifiable, $message)
-    {
-        // $message is what is returned by `toFcm`
-        return 'app'; // name of the firebase project to use
+        return (new FcmMessage(notification: new FcmNotification(
+                title: 'Account Activated',
+                body: 'Your account has been activated.',
+                image: 'http://example.com/url-to-image-here.png'
+            )))
+            ->data(['data1' => 'value', 'data2' => 'value2'])
+            ->custom([
+                'android' => [
+                    'notification' => [
+                        'color' => '#0A0A0A',
+                        'sound' => 'default',
+                    ],
+                    'fcm_options' => [
+                        'analytics_label' => 'analytics',
+                    ],
+                ],
+                'apns' => [
+                    'payload' => [
+                        'aps' => [
+                            'sound' => 'default'
+                        ],
+                    ],
+                    'fcm_options' => [
+                        'analytics_label' => 'analytics',
+                    ],
+                ],
+            ]);
     }
 }
 ```
 
-You will have to set a `routeNotificationForFcm()` method in your notifiable model. For example:
+You will have to set a `routeNotificationForFcm()` method in your notifiable model.
+This method should return the user's FCM token(s) from storage.
+For example:
 
 ```php
 class User extends Authenticatable
 {
     use Notifiable;
 
-    ....
+    ...
 
     /**
      * Specifies the user's FCM token
@@ -121,7 +122,7 @@ class User extends Authenticatable
 {
     use Notifiable;
 
-    ....
+    ...
 
     /**
      * Specifies the user's FCM tokens
@@ -143,45 +144,74 @@ $user->notify(new AccountActivated);
 
 ### Available Message methods
 
-The `FcmMessage` class contains the following methods for defining the payload. All these methods correspond to the 
-available payload defined in the 
-[FCM API documentation](https://firebase.google.com/docs/reference/fcm/rest/v1/projects.messages). Refer to this link to
-find all the available data you can set in your FCM notification.
+View the `FcmMessage` source for the complete list of options.
 
 ```php
-setName(string $name)
+FcmMessage::create()
+    ->name('name')
+    ->token('token')
+    ->topic('topic')
+    ->condition('condition')
+    ->data(['a' => 'b'])
+    ->custom(['notification' => []]);
 ```
 
-```php
-setData(array $data)
-```
+## Custom clients
+
+You can change the underlying Firebase Messaging client on the fly if required. Provide an instance of `Kreait\Firebase\Contract\Messaging` to your FCM message and it will be used in place of the default client.
 
 ```php
-setNotification(\NotificationChannels\Fcm\Resources\Notification $notification)
+public function toFcm(mixed $notifiable): FcmMessage
+{
+    $client = app(\Kreait\Firebase\Contract\Messaging::class);
+
+    return FcmMessage::create()->usingClient($client);
+}
 ```
 
-```php
-setAndroid(NotificationChannels\Fcm\Resources\AndroidConfig $androidConfig)
-```
+## Handling errors
+
+When a notification fails it will dispatch an `Illuminate\Notifications\Events\NotificationFailed` event. You can listen for this event and choose to handle these notifications as appropriate. For example, you may choose to delete expired notification tokens from your database.
 
 ```php
-setApns(NotificationChannels\Fcm\Resources\ApnsConfig $apnsConfig)
+<?php
+
+namespace App\Listeners;
+
+use Illuminate\Notifications\Events\NotificationFailed;
+use Illuminate\Support\Arr;
+
+class DeleteExpiredNotificationTokens
+{
+    /**
+     * Handle the event.
+     */
+    public function handle(NotificationFailed $event): void
+    {
+        $report = Arr::get($event->data, 'report');
+
+        $target = $report->target();
+
+        $event->notifiable->notificationTokens()
+            ->where('push_token', $target->value())
+            ->delete();
+    }
+}
 ```
 
-```php
-setWebpush(NotificationChannels\Fcm\Resources\WebpushConfig $webpushConfig)
-```
+Remember to register your event listeners in the event service provider.
 
 ```php
-setFcmOptions(NotificationChannels\Fcm\Resources\FcmOptions $fcmOptions)
-```
-
-```php
-setTopic(string $topic)
-```
-
-```php
-setCondition(string $condition)
+/**
+ * The event listener mappings for the application.
+ *
+ * @var array
+ */
+protected $listen = [
+    \Illuminate\Notifications\Events\NotificationFailed::class => [
+        \App\Listeners\DeleteExpiredNotificationTokens::class,
+    ],
+];
 ```
 
 ## Changelog
@@ -191,7 +221,7 @@ Please see [CHANGELOG](CHANGELOG.md) for more information what has changed recen
 ## Testing
 
 ``` bash
-$ composer test
+composer test
 ```
 
 ## Security
